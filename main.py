@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
+from astrbot.core import AstrBotConfig
 import astrbot.api.message_components as Comp
 
 # ========== 1. 配置映射类（从配置文件读取参数） ==========
@@ -201,26 +202,25 @@ class MagnetSearchService:
     "https://github.com/NightDust981989/astrbot_plugin_BitTorrent"
 )
 class MagnetSearchPlugin(Star):
-    def __init__(self, context: Context, **kwargs):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.config = config        
         # ========== 从插件配置文件读取参数 ==========
-        # 获取magnet_search配置节点
-        plugin_config = context.get_config("magnet_search")
-        
-        # 读取配置参数（默认值兜底）
-        base_url = plugin_config.get("base_url", "https://clg2.clgapp1.xyz")
-        search_path = plugin_config.get("search_path", "/cllj.php")
-        max_results = plugin_config.get("max_results", 3)
-        request_timeout = plugin_config.get("request_timeout", 15)
+        magnet_config_dict = self.config.get("magnet_search", {})
+
+        base_url = magnet_config_dict.get("base_url", "https://clg2.clgapp1.xyz")
+        search_path = magnet_config_dict.get("search_path", "/cllj.php")
+        max_results = int(magnet_config_dict.get("max_results", 3))
+        request_timeout = int(magnet_config_dict.get("request_timeout", 15))
 
         # 初始化配置类
-        self.config = MagnetConfig(
+        self.magnet_config = MagnetConfig(
             base_url=base_url,
             search_path=search_path,
             max_results=max_results,
             request_timeout=request_timeout
         )
-        self.search_service = MagnetSearchService(self.config)
+        self.search_service = MagnetSearchService(self.magnet_config)
         logger.info(f"磁力搜索插件初始化完成，使用站点：{base_url}{search_path}")
 
     @filter.command("bt")
