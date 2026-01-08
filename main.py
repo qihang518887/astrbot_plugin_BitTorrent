@@ -58,6 +58,28 @@ class MagnetUtils:
         if relative_url.startswith("/"):
             return f"{base_url}{relative_url}"
         return f"{base_url}/{relative_url}"
+    
+    @staticmethod
+    def get_sort_param(sort_keyword: str) -> str:
+        """
+        排序关键词
+        """
+        sort_mapping = {
+            "相关度": "",
+            "大小": "length",
+            "文件大小": "length",
+            "热门": "hot",
+            "热门程度": "hot",
+            "时间": "time",
+            "最新": "time",
+        }
+        # 提高鲁棒性
+        sort_keyword = sort_keyword.strip().lower()
+        for key, value in sort_mapping.items():
+            if key.lower() == sort_keyword:
+                return value
+        # 匹配不到返回空
+        return ""
 
 # ========== 3. 核心搜索服务 ==========
 class MagnetSearchService:
@@ -84,14 +106,17 @@ class MagnetSearchService:
             verify=False
         )
 
-    async def search(self, keyword: str) -> List[str]:
+    async def search(self, keyword: str, sort_param: str = "") -> List[str]:
         """搜索逻辑：使用配置文件的站点/接口/结果数"""
         await self._init_client()
         results = []
 
         try:
-            # ========== 构造搜索URL（从配置读取） ==========
+            # ========== 构造搜索URL ==========
             search_url = f"{self.config.base_url}{self.config.search_path}?name={urllib.parse.quote(keyword)}"
+            # 拼接排序参数
+            if sort_param:
+                search_url += f"&sort={sort_param}"
             logger.debug(f"GET请求：{search_url}")
             
             # 发起请求
@@ -198,7 +223,7 @@ class MagnetSearchService:
     "astrbot_plugin_BitTorrent",
     "NightDust981989",
     "BitTorrent磁力搜索",
-    "1.0.0",
+    "1.1.0",
     "https://github.com/NightDust981989/astrbot_plugin_BitTorrent"
 )
 class MagnetSearchPlugin(Star):
@@ -227,8 +252,8 @@ class MagnetSearchPlugin(Star):
     async def magnet_search_handler(self, event: AstrMessageEvent):
         """
         磁力链接搜索指令
-        使用方式：bt [关键词]
-        示例：bt 安达与岛村
+        使用方式：bt （排序方式） [关键词]
+        示例：bt 安达与岛村 / bt 热门 安达与岛村
         """
         message = event.message_str.strip()
         args = message.split()
@@ -238,12 +263,25 @@ class MagnetSearchPlugin(Star):
     
         if len(args) < 2 or args[0] != "bt":
             # 提示整合到chain
-            chain.append(Comp.Plain("用法：bt [关键词]\n示例：bt 安达与岛村"))
+            chain.append(Comp.Plain("用法：bt （排序方式） [关键词]\n示例：bt 热门 安达与岛村"))
             yield event.chain_result(chain)
             return
+        
+        # 解析排序参数和关键词
+        sort_keyword = ""
+        keyword = ""
+        if len(args) == 2:
+            # 默认相关度
+            keyword = args[1]
+        else:
+            # 有排序参数
+            sort_keyword = args[1]
+            keyword = " ".join(args[2:])
     
-        keyword = " ".join(args[1:])
-        results = await self.search_service.search(keyword)
+        # 转换排序关键词为sort
+        sort_param = MagnetUtils.get_sort_param(sort_keyword)
+        # 执行搜索
+        results = await self.search_service.search(keyword, sort_param)
     
         if not results:
             # 无结果的chain
