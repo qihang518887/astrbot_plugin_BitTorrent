@@ -4,7 +4,7 @@ import urllib.parse
 from typing import List, Dict
 from dataclasses import dataclass
 
-import httpx
+import cloudscraper
 from bs4 import BeautifulSoup
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
@@ -25,6 +25,7 @@ class MagnetConfig:
     def __post_init__(self):
         # 初始化固定验证Cookie
         self.captcha_cookies = {
+            "sssfwz": "qwsdsddsdsdse", 
             "sssfwz2": "qwsdsddsdsdse",
             "aywcUid": "lwgkvwDiYQ_20211009155217"
         }
@@ -85,33 +86,53 @@ class MagnetUtils:
 class MagnetSearchService:
     def __init__(self, config: MagnetConfig):
         self.config = config
-        self.client: httpx.AsyncClient = None
-
-    async def _init_client(self):
-        """初始化客户端：使用配置文件的超时时间"""
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        self.scraper = cloudscraper.create_scraper()
+        # 设置默认headers
+        self.scraper.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.70 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9",
             "Origin": self.config.base_url,
             "Content-Type": "application/x-www-form-urlencoded",
             "Referer": self.config.base_url
-        }
+        })
+        
+        # 设置验证cookie
+        for cookie_name, cookie_value in self.config.captcha_cookies.items():
+            self.scraper.cookies.set(cookie_name, cookie_value)
 
-        self.client = httpx.AsyncClient(
-            headers=headers,
-            cookies=self.config.captcha_cookies,
-            timeout=self.config.request_timeout,  # 从配置读取超时时间
-            follow_redirects=False,              # 关闭自动重定向
-            verify=False
-        )
+    def _detect_challenge_page(self, content: str) -> bool:
+        """检测是否为验证页面"""
+        challenge_indicators = [
+            'Checking your browser before accessing',
+            'You are being redirected',
+            'Checking if the site connection is secure',
+            'enable javascript',
+            'cloudflare',
+            'ray id',
+            '执行安全验证',  # 中文验证页面
+            '确认您是真人',
+            'cf-box',      # 验证框元素
+            'challenge-success',  # 验证成功元素
+            'click to verify'     # 点击验证
+        ]
+        content_lower = content.lower()
+        return any(indicator.lower() in content_lower for indicator in challenge_indicators)
 
     async def search(self, keyword: str, sort_param: str = "") -> List[str]:
         """搜索逻辑：使用配置文件的站点/接口/结果数"""
-        await self._init_client()
         results = []
 
         try:
+            # ========== 先访问首页设置cookie ==========
+            logger.info("访问首页以设置验证cookie...")
+            home_response = self.scraper.get(self.config.base_url, timeout=self.config.request_timeout)
+            
+            # 检查首页是否需要验证
+            if self._detect_challenge_page(home_response.text):
+                logger.warning("首页检测到验证页面")
+                return ["网站需要人工验证，请先在浏览器中访问完成验证后再使用本功能"]
+
             # ========== 构造搜索URL ==========
             search_url = f"{self.config.base_url}{self.config.search_path}?name={urllib.parse.quote(keyword)}"
             # 拼接排序参数
@@ -119,9 +140,14 @@ class MagnetSearchService:
                 search_url += f"&sort={sort_param}"
             logger.debug(f"GET请求：{search_url}")
             
-            # 发起请求
-            response = await self.client.get(search_url)
+            # 使用cloudscraper发起请求
+            response = self.scraper.get(search_url, timeout=self.config.request_timeout)
             logger.debug(f"响应状态码：{response.status_code}")
+            
+            # 检查是否遇到验证页面
+            if self._detect_challenge_page(response.text):
+                logger.warning("搜索页面检测到验证页面")
+                return ["网站需要人工验证，请先在浏览器中访问完成验证后再使用本功能"]
             
             # 提取原始响应
             raw_html = response.text
@@ -130,17 +156,41 @@ class MagnetSearchService:
             encrypt_match = re.search(r"window\.atob\('([^']+)'", raw_html)
             if not encrypt_match:
                 logger.warning(f"未找到window.atob加密串")
-                return []
+                # 尝试查找其他可能的加密方式
+                encrypt_matches = re.findall(r'"([^"]*(?:atob|btoa)[^"]*)"', raw_html)
+                if encrypt_matches:
+                    # 尝试处理可能的加密内容
+                    for match in encrypt_matches:
+                        if len(match) > 50:  # 假设加密字符串长度大于50
+                            try:
+                                decrypted_content = MagnetUtils.decrypt_base64(match)
+                                if decrypted_content and len(decrypted_content) > len(raw_html):
+                                    raw_html = decrypted_content
+                                    break
+                            except:
+                                continue
+                
+                if not encrypt_match and 'atob' not in raw_html:
+                    logger.warning(f"页面内容：{raw_html[:500]}...")
+                    return []
             
             decrypted_html = MagnetUtils.decrypt_base64(encrypt_match.group(1))
-
 
             # ========== 提取xq.php链接（使用配置） ==========
             soup = BeautifulSoup(decrypted_html, "lxml")
             result_container = soup.find("ul", id="Search_list_wrapper")
             if not result_container:
                 logger.warning(f"解密后仍无搜索结果容器")
-                return []
+                # 尝试其他可能的选择器
+                result_containers = soup.find_all(["div", "ul", "ol"], class_=re.compile(r".*search.*|.*result.*|.*list.*", re.I))
+                for container in result_containers:
+                    if len(container.find_all("li")) > 0:
+                        result_container = container
+                        break
+                
+                if not result_container:
+                    logger.warning("未能找到结果容器")
+                    return []
 
             detail_links = []
             processed_urls = set()
@@ -152,6 +202,10 @@ class MagnetSearchService:
                     continue
 
                 link_tag = li.find("a", href=re.compile(r"xq\.php\?key="))
+                if not link_tag:
+                    # 尝试其他可能的链接模式
+                    link_tag = li.find("a", href=re.compile(r"\.php\?"))
+                
                 if not link_tag:
                     continue
 
@@ -180,7 +234,14 @@ class MagnetSearchService:
             # ========== 解析详情页 ==========
             for link in detail_links:
                 try:
-                    detail_resp = await self.client.get(link["url"], follow_redirects=False)
+                    detail_resp = self.scraper.get(link["url"], timeout=self.config.request_timeout)
+                    
+                    # 检查详情页是否也需要验证
+                    if self._detect_challenge_page(detail_resp.text):
+                        logger.warning(f"详情页遇到验证：{link['title']}")
+                        results.append(f"标题：{link['title']}\n解析失败：遇到人机验证\n文件大小：{link['size']}")
+                        continue
+
                     detail_raw = detail_resp.text
 
                     # 解密详情页
@@ -191,13 +252,23 @@ class MagnetSearchService:
 
                     # 提取磁力链接
                     magnet_link = None
-                    magnet_a = soup.find("a", href=re.compile(r"magnet:\?xt=urn:btih:"))
+                    soup_detail = BeautifulSoup(detail_html, "lxml")
+                    magnet_a = soup_detail.find("a", href=re.compile(r"magnet:\?xt=urn:btih:"))
                     if magnet_a:
                         magnet_link = magnet_a.get("href").strip()
                     if not magnet_link:
-                        magnet_match = re.search(r"magnet:\?xt=urn:btih:[a-fA-F0-9]{40,}[^\"']*", detail_html)
-                        if magnet_match:
-                            magnet_link = magnet_match.group().strip()
+                        # 尝试在文本中查找
+                        magnet_matches = re.findall(r'magnet:\?xt=urn:btih:[a-zA-Z0-9]+', detail_html)
+                        if magnet_matches:
+                            magnet_link = magnet_matches[0].strip()
+                    
+                    if not magnet_link:
+                        # 尝试查找可能的JavaScript变量
+                        js_matches = re.findall(r'"(magnet:\?xt=[^"]*)"', detail_html)
+                        for match in js_matches:
+                            if match.startswith("magnet:?xt=urn:btih:"):
+                                magnet_link = match
+                                break
 
                     # 构造结果
                     results.append(
@@ -212,9 +283,6 @@ class MagnetSearchService:
         except Exception as e:
             logger.error(f"搜索异常：{str(e)}")
             results = [f"搜索失败：{str(e)[:50]}"]
-        finally:
-            if self.client:
-                await self.client.aclose()
 
         return results
 
@@ -223,7 +291,7 @@ class MagnetSearchService:
     "astrbot_plugin_BitTorrent",
     "NightDust981989",
     "BitTorrent磁力搜索",
-    "1.1.0",
+    "1.2.0",
     "https://github.com/NightDust981989/astrbot_plugin_BitTorrent"
 )
 class MagnetSearchPlugin(Star):
@@ -285,7 +353,7 @@ class MagnetSearchPlugin(Star):
     
         if not results:
             # 无结果的chain
-            chain.append(Comp.Plain("未找到相关磁力链接"))
+            chain.append(Comp.Plain("未找到相关磁力链接，网站失效或网络问题"))
         else:
             # 有结果时拼接完整内容
             chain.append(Comp.Plain(f"共找到 {len(results)} 条有效结果："))
