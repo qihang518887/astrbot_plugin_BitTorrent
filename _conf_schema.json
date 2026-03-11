@@ -8,7 +8,7 @@
         "description": "填写磁力狗站点地址",
         "type": "string",
         "hint": "若链接失效，请访问 https://ciligoufabuye3.xyz 或发邮件至 clgdzzh@gmail.com 更新地址",
-        "default": "https://clg2.clgapp1.xyz"
+        "default": "https://clg8.clgapp4.xyz"
       },
       "search_path": {
         "description": "搜索接口路径",
