@@ -81,6 +81,30 @@ class MagnetUtils:
         return ""
 
 # ========== 3. 核心搜索服务 ==========
+class WhatsLinkService:
+    """whatslink.info 预览服务"""
+
+    API_URL = "https://whatslink.info/api/v1/link"
+
+    def __init__(self, timeout: int = 15):
+        self.client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+
+    async def get_preview(self, magnet_url: str) -> dict | None:
+        """查询磁链预览信息，失败时返回 None"""
+        try:
+            resp = await self.client.get(self.API_URL, params={"url": magnet_url})
+            if resp.status_code != 200:
+                logger.warning(f"whatslink API 返回 {resp.status_code}")
+                return None
+            return resp.json()
+        except Exception as e:
+            logger.warning(f"whatslink API 请求失败：{e}")
+            return None
+
+    async def close(self):
+        await self.client.aclose()
+
+
 class MagnetSearchService:
     def __init__(self, config: MagnetConfig):
         self.config = config
@@ -106,8 +130,8 @@ class MagnetSearchService:
             verify=False
         )
 
-    async def search(self, keyword: str, sort_param: str = "") -> List[str]:
-        """搜索逻辑：使用配置文件的站点/接口/结果数"""
+    async def search(self, keyword: str, sort_param: str = "") -> List[dict]:
+        """搜索逻辑：返回包含原始数据的 dict 列表"""
         results = []
 
         try:
@@ -198,28 +222,44 @@ class MagnetSearchService:
                         if magnet_match:
                             magnet_link = magnet_match.group().strip()
 
-                    # 构造结果
-                    results.append(
-                        f"标题：{link['title']}\n"
-                        f"磁力链接：{magnet_link or '未提取到'}\n"
-                        f"文件大小：{link['size']}\n"
-                        f"收录时间：{link['create_time']}"
-                    )
+                    results.append({
+                        "title": link["title"],
+                        "magnet_link": magnet_link,
+                        "size": link["size"],
+                        "create_time": link["create_time"],
+                    })
                 except Exception as e:
-                    results.append(f"标题：{link['title']}\n解析失败：{str(e)[:30]}\n文件大小：{link['size']}")
+                    results.append({
+                        "title": link["title"],
+                        "magnet_link": None,
+                        "size": link["size"],
+                        "create_time": "",
+                        "error": str(e)[:30],
+                    })
 
         except Exception as e:
             logger.error(f"搜索异常：{str(e)}")
-            results = [f"搜索失败：{str(e)[:50]}"]
+            results = [{"error": f"搜索失败：{str(e)[:50]}"}]
 
         return results
 
-# ========== 4. 插件主类 ==========
+# ========== 4. 工具函数 ==========
+def _format_size(size_bytes) -> str:
+    """将字节数格式化为可读大小"""
+    if not size_bytes or size_bytes <= 0:
+        return "未知"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} PB"
+
+# ========== 5. 插件主类 ==========
 @register(
     "astrbot_plugin_BitTorrent",
     "NightDust981989",
     "BitTorrent磁力搜索",
-    "1.2.1",
+    "1.3.0",
     "https://github.com/NightDust981989/astrbot_plugin_BitTorrent"
 )
 class MagnetSearchPlugin(Star):
@@ -229,10 +269,11 @@ class MagnetSearchPlugin(Star):
         # ========== 从插件配置文件读取参数 ==========
         magnet_config_dict = self.config.get("magnet_search", {})
 
-        base_url = magnet_config_dict.get("base_url", "https://clg8.clgapp4.xyz")
+        base_url = magnet_config_dict.get("base_url", "https://clg.clgapp4.xyz")
         search_path = magnet_config_dict.get("search_path", "/cllj.php")
         max_results = int(magnet_config_dict.get("max_results", 3))
         request_timeout = int(magnet_config_dict.get("request_timeout", 15))
+        self.enable_preview = magnet_config_dict.get("enable_preview", True)
 
         # 初始化配置类
         self.magnet_config = MagnetConfig(
@@ -242,7 +283,28 @@ class MagnetSearchPlugin(Star):
             request_timeout=request_timeout
         )
         self.search_service = MagnetSearchService(self.magnet_config)
+        self.whatslink_service = WhatsLinkService(timeout=request_timeout)
         logger.info(f"磁力搜索插件初始化完成，使用站点：{base_url}{search_path}")
+
+    async def terminate(self):
+        await self.search_service.client.aclose()
+        await self.whatslink_service.close()
+
+    @staticmethod
+    def _format_result(idx: int, res: dict) -> str:
+        """格式化单条搜索结果"""
+        if "error" in res and not res.get("magnet_link"):
+            title = res.get("title", "未知")
+            size = res.get("size", "未知")
+            return f"‎\n===== 结果 {idx} =====\n‎标题：{title}\n解析失败：{res['error']}\n文件大小：{size}"
+
+        return (
+            f"‎\n===== 结果 {idx} =====\n‎"
+            f"标题：{res['title']}\n"
+            f"磁力链接：{res['magnet_link'] or '未提取到'}\n"
+            f"文件大小：{res['size']}\n"
+            f"收录时间：{res['create_time']}"
+        )
 
     @filter.command("bt")
     async def magnet_search_handler(self, event: AstrMessageEvent):
@@ -253,38 +315,110 @@ class MagnetSearchPlugin(Star):
         """
         message = event.message_str.strip()
         args = message.split()
-    
-        # 初始化消息链
+
         chain = []
-    
+
         if len(args) < 2 or args[0] != "bt":
-            # 提示整合到chain
             chain.append(Comp.Plain("用法：bt （排序方式） [关键词]\n示例：bt 热门 安达与岛村"))
             yield event.chain_result(chain)
             return
-        
+
         # 解析排序参数和关键词
         sort_keyword = ""
-        keyword = ""
         if len(args) == 2:
-            # 默认相关度
             keyword = args[1]
         else:
-            # 有排序参数
             sort_keyword = args[1]
             keyword = " ".join(args[2:])
-    
-        # 转换排序关键词为sort
+
         sort_param = MagnetUtils.get_sort_param(sort_keyword)
-        # 执行搜索
         results = await self.search_service.search(keyword, sort_param)
-    
+
         if not results:
-            # 无结果时
             chain.append(Comp.Plain("未找到相关磁力链接，网站失效或网络问题"))
+        elif len(results) == 1 and results[0].get("error") and not results[0].get("title"):
+            # 搜索整体失败
+            chain.append(Comp.Plain(results[0]["error"]))
         else:
-            chain.append(Comp.Plain(f"共找到 {len(results)} 条有效结果："))
+            # 第一次发送：所有基础结果 + 预览文本
+            text_chain = [Comp.Plain(f"共找到 {len(results)} 条有效结果：")]
+            preview_nodes = []
             for idx, res in enumerate(results, 1):
-                chain.append(Comp.Plain(f"‎\n===== 结果 {idx} =====\n‎{res}"))
-    
+                text_chain.append(Comp.Plain(self._format_result(idx, res)))
+                preview = None
+                if self.enable_preview and res.get("magnet_link"):
+                    preview = await self.whatslink_service.get_preview(res["magnet_link"])
+                if preview:
+                    text_chain.append(Comp.Plain(
+                        f"‎\n--- 预览 ---\n‎"
+                        f"类型：{preview.get('file_type') or '未知'}\n"
+                        f"文件数：{preview.get('count') or '未知'}"
+                    ))
+                    # 收集截图到 Node
+                    if preview.get("screenshots"):
+                        screenshot_url = preview["screenshots"][0].get("screenshot")
+                        if screenshot_url:
+                            node_content = [Comp.Plain(f"结果{idx}预览图"), Comp.Image.fromURL(screenshot_url)]
+                        else:
+                            node_content = [Comp.Plain(f"结果{idx}无预览图")]
+                    else:
+                        node_content = [Comp.Plain(f"结果{idx}无预览图")]
+                else:
+                    node_content = [Comp.Plain(f"结果{idx}无预览图")]
+                preview_nodes.append(Comp.Node(
+                    content=node_content,
+                    name=event.get_sender_name(),
+                    uin=str(event.get_sender_id()),
+                ))
+            if self.enable_preview:
+                text_chain.append(Comp.Plain("‎\n预览数据来源：whatslink.info"))
+            yield event.chain_result(text_chain)
+
+            # 第二次发送：预览图合并转发
+            if self.enable_preview and preview_nodes:
+                yield event.chain_result([Comp.Nodes(nodes=preview_nodes)])
+
+    @filter.command("btp")
+    async def magnet_preview_handler(self, event: AstrMessageEvent):
+        """
+        磁链预览指令
+        使用方式：btp [磁力链接]
+        示例：btp magnet:?xt=urn:btih:xxxx
+        """
+        message = event.message_str.strip()
+        args = message.split(maxsplit=1)
+
+        chain = []
+
+        if len(args) < 2:
+            chain.append(Comp.Plain("用法：btp [磁力链接]\n示例：btp magnet:?xt=urn:btih:xxxx"))
+            yield event.chain_result(chain)
+            return
+
+        magnet_url = args[1].strip()
+        if not magnet_url.startswith("magnet:"):
+            chain.append(Comp.Plain("请输入有效的磁力链接（以 magnet: 开头）"))
+            yield event.chain_result(chain)
+            return
+
+        preview = await self.whatslink_service.get_preview(magnet_url)
+        if not preview or not preview.get("name"):
+            chain.append(Comp.Plain("未查询到预览信息，链接可能无效或 API 暂不可用"))
+            yield event.chain_result(chain)
+            return
+
+        text = (
+            f"文件名：{preview.get('name', '未知')}\n‎"
+            f"类型：{preview.get('file_type') or '未知'}\n"
+            f"总大小：{_format_size(preview.get('size', 0))}\n"
+            f"文件数：{preview.get('count') or '未知'}\n"
+            f"‎\n预览数据来源：whatslink.info"
+        )
+        chain.append(Comp.Plain(text))
+
+        if preview.get("screenshots"):
+            screenshot_url = preview["screenshots"][0].get("screenshot")
+            if screenshot_url:
+                chain.append(Comp.Image.fromURL(screenshot_url))
+
         yield event.chain_result(chain)

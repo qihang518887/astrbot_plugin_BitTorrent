@@ -2,13 +2,13 @@
   "magnet_search": {
     "description": "核心配置",
     "type": "object",
-    "hint": "可自定义站点地址、返回结果数、超时时间",
+    "hint": "可自定义站点地址、返回结果数、超时时间、预览开关",
     "items": {
       "base_url": {
         "description": "填写磁力狗站点地址",
         "type": "string",
         "hint": "若链接失效，请访问 https://ciligoufabuye3.xyz 或发邮件至 clgdzzh@gmail.com 更新地址",
-        "default": "https://clg8.clgapp4.xyz"
+        "default": "https://clg.clgapp4.xyz"
       },
       "search_path": {
         "description": "搜索接口路径",
@@ -27,6 +27,12 @@
         "type": "int",
         "hint": "详情页解密需耗时，建议设置 15-20",
         "default": 15
+      },
+      "enable_preview": {
+        "description": "搜索结果是否附带 whatslink.info 预览（文件信息+截图）",
+        "type": "bool",
+        "hint": "关闭后 bt 搜索不再调用 whatslink API，btp 命令不受影响",
+        "default": true
       }
     }
   }
