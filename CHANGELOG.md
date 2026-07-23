@@ -1,5 +1,11 @@
 # 更新日志
 
+## [v1.4.0] - 2026-07-23
+### 新增
+- 新增 `bt_search` 和 `bt_preview` 两个 LLM 函数调用工具（`@llm_tool`），AstrBot 大模型可自动调用
+- LLM 可通过 `bt_search` 搜索磁力链接并从中提取链接
+- LLM 可通过 `bt_preview` 查询磁链预览信息
+
 ## [v1.3.0] - 2026-05-14
 ### 新增
 - 搜索结果自动附带 whatslink.info 预览（类型、文件数、预览图）
