@@ -8,7 +8,7 @@ import httpx
 from bs4 import BeautifulSoup
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
-from astrbot.api import logger
+from astrbot.api import logger, llm_tool
 from astrbot.core import AstrBotConfig
 import astrbot.api.message_components as Comp
 
@@ -265,7 +265,7 @@ def _format_size(size_bytes) -> str:
 class MagnetSearchPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        self.config = config        
+        self.config = config      
         # ========== 从插件配置文件读取参数 ==========
         magnet_config_dict = self.config.get("magnet_search", {})
 
@@ -422,3 +422,57 @@ class MagnetSearchPlugin(Star):
                 chain.append(Comp.Image.fromURL(screenshot_url))
 
         yield event.chain_result(chain)
+
+    @llm_tool("bt_preview")
+    async def btp_llm_tool(self, magnet_url: str) -> str:
+        """获取磁力链接的预览信息。
+
+        Args:
+            magnet_url(string): 磁力链接，以 magnet: 开头
+        """
+        if not magnet_url.startswith("magnet:"):
+            return "错误：请输入有效的磁力链接（以 magnet: 开头）"
+
+        preview = await self.whatslink_service.get_preview(magnet_url)
+        if not preview or not preview.get("name"):
+            return "未查询到预览信息，链接可能无效或 API 暂不可用"
+
+        text = (
+            f"文件名：{preview.get('name', '未知')}\n"
+            f"类型：{preview.get('file_type') or '未知'}\n"
+            f"总大小：{_format_size(preview.get('size', 0))}\n"
+            f"文件数：{preview.get('count') or '未知'}\n"
+            f"预览数据来源：whatslink.info"
+        )
+        if preview.get("screenshots"):
+            screenshot_url = preview["screenshots"][0].get("screenshot")
+            if screenshot_url:
+                text += f"\n预览图：{screenshot_url}"
+        return text
+
+    @llm_tool("bt_search")
+    async def bt_search_llm_tool(self, keyword: str, sort_by: str = "") -> str:
+        """搜索磁力链接。
+
+        Args:
+            keyword(string): 搜索关键词
+            sort_by(string): 排序方式，可选：相关度、大小、热门、时间，默认相关度
+        """
+        sort_param = MagnetUtils.get_sort_param(sort_by)
+        results = await self.search_service.search(keyword, sort_param)
+
+        if not results:
+            return "未找到相关磁力链接，网站失效或网络问题"
+        elif len(results) == 1 and results[0].get("error") and not results[0].get("title"):
+            return results[0]["error"]
+
+        text = f"共找到 {len(results)} 条有效结果：\n"
+        for idx, res in enumerate(results, 1):
+            text += (
+                f"\n===== 结果 {idx} =====\n"
+                f"标题：{res['title']}\n"
+                f"磁力链接：{res['magnet_link'] or '未提取到'}\n"
+                f"文件大小：{res['size']}\n"
+                f"收录时间：{res['create_time']}"
+            )
+        return text
