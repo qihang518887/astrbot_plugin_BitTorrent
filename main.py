@@ -263,7 +263,7 @@ def _format_size(size_bytes) -> str:
     "astrbot_plugin_BitTorrent",
     "NightDust981989",
     "BitTorrent磁力搜索",
-    "1.4.3",
+    "1.4.5",
     "https://github.com/NightDust981989/astrbot_plugin_BitTorrent"
 )
 class MagnetSearchPlugin(Star):
