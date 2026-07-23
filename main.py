@@ -243,7 +243,11 @@ class MagnetSearchService:
 
         return results
 
-# ========== 4. 工具函数 ==========
+# ========== 4. 模块级服务实例（供llm_tool使用） ==========
+_whatslink_service: WhatsLinkService = None
+_search_service: MagnetSearchService = None
+
+# ========== 5. 工具函数 ==========
 def _format_size(size_bytes) -> str:
     """将字节数格式化为可读大小"""
     if not size_bytes or size_bytes <= 0:
@@ -254,12 +258,12 @@ def _format_size(size_bytes) -> str:
         size_bytes /= 1024
     return f"{size_bytes:.1f} PB"
 
-# ========== 5. 插件主类 ==========
+# ========== 6. 插件主类 ==========
 @register(
     "astrbot_plugin_BitTorrent",
     "NightDust981989",
     "BitTorrent磁力搜索",
-    "1.3.0",
+    "1.4.1",
     "https://github.com/NightDust981989/astrbot_plugin_BitTorrent"
 )
 class MagnetSearchPlugin(Star):
@@ -284,6 +288,9 @@ class MagnetSearchPlugin(Star):
         )
         self.search_service = MagnetSearchService(self.magnet_config)
         self.whatslink_service = WhatsLinkService(timeout=request_timeout)
+        global _whatslink_service, _search_service
+        _whatslink_service = self.whatslink_service
+        _search_service = self.search_service
         logger.info(f"磁力搜索插件初始化完成，使用站点：{base_url}{search_path}")
 
     async def terminate(self):
@@ -423,8 +430,9 @@ class MagnetSearchPlugin(Star):
 
         yield event.chain_result(chain)
 
+    @staticmethod
     @llm_tool("bt_preview")
-    async def btp_llm_tool(self, magnet_url: str) -> str:
+    async def btp_llm_tool(magnet_url: str) -> str:
         """获取磁力链接的预览信息。
 
         Args:
@@ -433,7 +441,7 @@ class MagnetSearchPlugin(Star):
         if not magnet_url.startswith("magnet:"):
             return "错误：请输入有效的磁力链接（以 magnet: 开头）"
 
-        preview = await self.whatslink_service.get_preview(magnet_url)
+        preview = await _whatslink_service.get_preview(magnet_url)
         if not preview or not preview.get("name"):
             return "未查询到预览信息，链接可能无效或 API 暂不可用"
 
@@ -450,8 +458,9 @@ class MagnetSearchPlugin(Star):
                 text += f"\n预览图：{screenshot_url}"
         return text
 
+    @staticmethod
     @llm_tool("bt_search")
-    async def bt_search_llm_tool(self, keyword: str, sort_by: str = "") -> str:
+    async def bt_search_llm_tool(keyword: str, sort_by: str = "") -> str:
         """搜索磁力链接。
 
         Args:
@@ -459,7 +468,7 @@ class MagnetSearchPlugin(Star):
             sort_by(string): 排序方式，可选：相关度、大小、热门、时间，默认相关度
         """
         sort_param = MagnetUtils.get_sort_param(sort_by)
-        results = await self.search_service.search(keyword, sort_param)
+        results = await _search_service.search(keyword, sort_param)
 
         if not results:
             return "未找到相关磁力链接，网站失效或网络问题"
