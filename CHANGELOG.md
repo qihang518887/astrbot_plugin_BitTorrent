@@ -1,5 +1,11 @@
 # 更新日志
 
+## [v1.4.7] - 2026-07-23
+### 修复
+- 根本原因：AstrBot 加载插件时会用 `functools.partial(handler, plugin_instance)` 绑定实例，导致 `@staticmethod` 函数收到多余的 `self` 参数
+- 移除 `@staticmethod`，改用实例方法（带 `self`），与 AstrBot 插件规范一致
+- LLM 工具改用 `self.whatslink_service` 和 `self.search_service`，移除模块级全局变量
+
 ## [v1.4.6] - 2026-07-23
 ### 修复
 - 根据 AstrBot 源码示例，使用正确的函数签名：`async def func(event, param1: str, param2: str = "")`
