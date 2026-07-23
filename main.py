@@ -263,7 +263,7 @@ def _format_size(size_bytes) -> str:
     "astrbot_plugin_BitTorrent",
     "NightDust981989",
     "BitTorrent磁力搜索",
-    "1.4.1",
+    "1.4.2",
     "https://github.com/NightDust981989/astrbot_plugin_BitTorrent"
 )
 class MagnetSearchPlugin(Star):
@@ -432,12 +432,16 @@ class MagnetSearchPlugin(Star):
 
     @staticmethod
     @llm_tool("bt_preview")
-    async def btp_llm_tool(magnet_url: str) -> str:
+    async def btp_llm_tool(**kwargs) -> str:
         """获取磁力链接的预览信息。
 
         Args:
             magnet_url(string): 磁力链接，以 magnet: 开头
         """
+        magnet_url = kwargs.get("magnet_url")
+        if not magnet_url:
+            return "错误：缺少 magnet_url 参数"
+        
         if not magnet_url.startswith("magnet:"):
             return "错误：请输入有效的磁力链接（以 magnet: 开头）"
 
@@ -460,13 +464,19 @@ class MagnetSearchPlugin(Star):
 
     @staticmethod
     @llm_tool("bt_search")
-    async def bt_search_llm_tool(keyword: str, sort_by: str = "") -> str:
+    async def bt_search_llm_tool(**kwargs) -> str:
         """搜索磁力链接。
 
         Args:
             keyword(string): 搜索关键词
             sort_by(string): 排序方式，可选：相关度、大小、热门、时间，默认相关度
         """
+        keyword = kwargs.get("keyword")
+        sort_by = kwargs.get("sort_by", "")
+        
+        if not keyword:
+            return "错误：缺少 keyword 参数"
+        
         sort_param = MagnetUtils.get_sort_param(sort_by)
         results = await _search_service.search(keyword, sort_param)
 

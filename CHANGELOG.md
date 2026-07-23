@@ -1,5 +1,10 @@
 # 更新日志
 
+## [v1.4.2] - 2026-07-23
+### 修复
+- 修复 `@llm_tool` 装饰器调用时参数重复传递的问题
+- 使用 `**kwargs` 接收参数，避免 "got multiple values for argument" 错误
+
 ## [v1.4.1] - 2026-07-23
 ### 修复
 - 修复 `@llm_tool` 装饰器在实例方法上导致的 "got multiple values for argument" 运行时错误
