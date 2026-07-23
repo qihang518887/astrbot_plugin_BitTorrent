@@ -1,5 +1,10 @@
 # 更新日志
 
+## [v1.4.6] - 2026-07-23
+### 修复
+- 根据 AstrBot 源码示例，使用正确的函数签名：`async def func(event, param1: str, param2: str = "")`
+- 移除 `**kwargs`，改为直接定义参数，解决 "takes 1 positional argument but 2 were given" 错误
+
 ## [v1.4.5] - 2026-07-23
 ### 修复
 - 根据 AstrBot 源码确认 `@llm_tool` 调用签名：`handler(event, **kwargs)`
