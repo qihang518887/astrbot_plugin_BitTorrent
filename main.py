@@ -263,7 +263,7 @@ def _format_size(size_bytes) -> str:
     "astrbot_plugin_BitTorrent",
     "NightDust981989",
     "BitTorrent磁力搜索",
-    "1.4.2",
+    "1.4.3",
     "https://github.com/NightDust981989/astrbot_plugin_BitTorrent"
 )
 class MagnetSearchPlugin(Star):
@@ -432,7 +432,7 @@ class MagnetSearchPlugin(Star):
 
     @staticmethod
     @llm_tool("bt_preview")
-    async def btp_llm_tool(**kwargs) -> str:
+    async def btp_llm_tool(event, **kwargs) -> str:
         """获取磁力链接的预览信息。
 
         Args:
@@ -464,7 +464,7 @@ class MagnetSearchPlugin(Star):
 
     @staticmethod
     @llm_tool("bt_search")
-    async def bt_search_llm_tool(**kwargs) -> str:
+    async def bt_search_llm_tool(event, **kwargs) -> str:
         """搜索磁力链接。
 
         Args:
